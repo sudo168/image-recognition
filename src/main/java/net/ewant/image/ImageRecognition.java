@@ -10,7 +10,6 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferByte;
 import java.io.File;
-import java.net.URISyntaxException;
 import java.util.*;
 
 import static org.opencv.ml.Ml.ROW_SAMPLE;
@@ -23,7 +22,6 @@ public class ImageRecognition {
     static{
         System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
     }
-
 
     /**
      * 训练模型
@@ -71,8 +69,9 @@ public class ImageRecognition {
         /**
          * 1. 读取原始图像转换为OpenCV的Mat数据格式
          */
-        Mat srcMat = Imgcodecs.imread("F:/cardtest/cards.png");  //原始图像
+        Mat srcMat = Imgcodecs.imread("F:/cardtest/cs4.jpg");  //原始图像
         System.out.println(srcMat.height());
+
         /**
          * 2. 强原始图像转化为灰度图像
          */
@@ -86,7 +85,7 @@ public class ImageRecognition {
         System.out.println("保存灰度图像！");
 
         Mat binMat = new Mat(); //二值化图像
-        Imgproc.threshold(grayMat, binMat, 80d, 255d, Imgproc.THRESH_BINARY);// 对光照和环境要求较高，阈值设置合适值
+        Imgproc.threshold(grayMat, binMat, 135d, 255d, Imgproc.THRESH_BINARY);// 对光照和环境要求较高，阈值设置合适值
 
         //查找轮廓
         List<MatOfPoint> contours = new ArrayList<>();
@@ -102,10 +101,10 @@ public class ImageRecognition {
             Point tl = rect.tl();
             Point br = rect.br();
             double width = Math.abs(br.x - tl.x);
-            double height = Math.abs(tl.y - br.y);
-            //System.out.println("轮廓下标："+k +" { width:"+width+"; height:"+height+" } ");
-            if(width < 65 && width > 20 && height < 65 && height > 20){// 20-65区间为数字或花色
+            //double height = Math.abs(tl.y - br.y);
+            if(width > (grayMat.width() - grayMat.width() * 0.05)){
                 cards.add(rect);
+                break;
             }
         }
         Collections.sort(cards, new Comparator<Rect>(){
@@ -121,9 +120,11 @@ public class ImageRecognition {
             }
         });
         int i = 0;
-        for(Rect rect : cards){
-            System.out.println("TL x:"+rect.tl().x+",y:"+rect.tl().y + "; BR x:"+rect.br().x+",y:"+rect.br().y);
-            saveJpgImage(toBufferedImage(new Mat(binMat, rect)), "F:/cardtest/rect"+(i++)+".jpg");
+        Iterator<Rect> iterator = cards.iterator();
+        while(iterator.hasNext()){
+            Rect rect = iterator.next();
+            Mat rMat = new Mat(binMat, rect);
+            saveJpgImage(toBufferedImage(rMat), "F:/cardtest/rect"+(i++)+".jpg");
         }
     }
 
