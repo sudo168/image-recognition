@@ -23,6 +23,10 @@ public class ImageRecognition {
         System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
     }
 
+    private static KNearest numModel = KNearest.create();
+    private static KNearest flagModel = KNearest.create();
+
+
     /**
      * 训练模型
      */
@@ -40,7 +44,6 @@ public class ImageRecognition {
         numData.convertTo(numData, CvType.CV_32F); //uchar型转换为cv_32f
         //使用KNN算法
         int K = 5;
-        KNearest numModel = KNearest.create();
         numModel.setDefaultK(K);
         numModel.setIsClassifier(true);
         numModel.train(numData, ROW_SAMPLE, Converters.vector_int_to_Mat(numLabels));
@@ -57,7 +60,6 @@ public class ImageRecognition {
         flagData.convertTo(flagData, CvType.CV_32F); //uchar型转换为cv_32f
         //使用KNN算法
         int L = 5;
-        KNearest flagModel = KNearest.create();
         flagModel.setDefaultK(L);
         flagModel.setIsClassifier(true);
         flagModel.train(flagData, ROW_SAMPLE, Converters.vector_int_to_Mat(flagLabels));
@@ -85,28 +87,23 @@ public class ImageRecognition {
         System.out.println("保存灰度图像！");
 
         Mat binMat = new Mat(); //二值化图像
-        Imgproc.threshold(grayMat, binMat, 135d, 255d, Imgproc.THRESH_BINARY);// 对光照和环境要求较高，阈值设置合适值
+        Imgproc.threshold(grayMat, binMat, 130d, 255d, Imgproc.THRESH_BINARY);// 对光照和环境要求较高，阈值设置合适值
 
         //查找轮廓
-        List<MatOfPoint> contours = new ArrayList<>();
-        Mat hierarchy = new Mat();
-        Imgproc.findContours(binMat, contours, hierarchy, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_NONE);
+        Rect rect = getRect(binMat);
+        int i = 0;
+        Mat rMat = new Mat(binMat, rect);
+        saveJpgImage(toBufferedImage(rMat), "F:/cardtest/rect"+(i++)+".jpg");
+        //----------漫水填充，去掉扑克牌外面的黑色像素，只留下黑色的数字、花色以及白色背景------------------
+        Imgproc.threshold(rMat, rMat, 150d, 255d, Imgproc.THRESH_BINARY); //注意阈值选取
+        Mat mask = new Mat();
+        Imgproc.floodFill(rMat, mask, new Point(0, 0), new Scalar(255, 255, 255));
+        Imgproc.floodFill(rMat, mask, new Point(0, rMat.rows() - 1), new Scalar(255, 255, 255));
+        Imgproc.floodFill(rMat, mask, new Point(rMat.cols() - 1, 0), new Scalar(255, 255, 255));
+        Imgproc.floodFill(rMat, mask, new Point(rMat.cols() - 1, rMat.rows() - 1), new Scalar(255, 255, 255));
+        saveJpgImage(toBufferedImage(rMat), "F:/cardtest/rect"+(i++)+".jpg");
 
-        System.out.println("轮廓数量："+ contours.size() + "===" + hierarchy.cols());
-        System.out.println("hierarchy类型："+ hierarchy);
-        List<Rect> cards = new ArrayList<>();
-        for(int k=0;k<contours.size();k++) {
-            MatOfPoint point = contours.get(k);
-            Rect rect = Imgproc.boundingRect(point);
-            Point tl = rect.tl();
-            Point br = rect.br();
-            double width = Math.abs(br.x - tl.x);
-            //double height = Math.abs(tl.y - br.y);
-            if(width > (grayMat.width() - grayMat.width() * 0.05)){
-                cards.add(rect);
-                break;
-            }
-        }
+        List<Rect> cards = getRects(rMat);
         Collections.sort(cards, new Comparator<Rect>(){
             @Override
             public int compare(Rect o1, Rect o2) {
@@ -119,13 +116,101 @@ public class ImageRecognition {
                 return 0;
             }
         });
-        int i = 0;
         Iterator<Rect> iterator = cards.iterator();
         while(iterator.hasNext()){
-            Rect rect = iterator.next();
-            Mat rMat = new Mat(binMat, rect);
-            saveJpgImage(toBufferedImage(rMat), "F:/cardtest/rect"+(i++)+".jpg");
+            Rect current = iterator.next();
+            current.set(new double[]{current.x - 13, current.y, current.width + 13, current.height});
+            Mat cardRect = new Mat(rMat, current);
+            Core.bitwise_not(cardRect, cardRect);// 黑白颜色反转
+            System.out.print(" 数字：" + predictNum(new Mat(cardRect, new Rect(0, 0, cardRect.width(), cardRect.height()))));
+            System.out.print(" 花色：" + predictFlag(new Mat(cardRect, new Rect(0, 0, cardRect.width(), cardRect.height()))));
+            System.out.println("========" + current.x + "==" + current.y + ", index: " + i);
+            saveJpgImage(toBufferedImage(cardRect), "F:/cardtest/rect"+(i++)+".jpg");
         }
+    }
+
+    private static String predictNum(Mat num){
+        Mat numData = new Mat(),tmp = new Mat();
+        Imgproc.resize(num, tmp, new Size(30, 40));
+        numData.push_back(tmp.reshape(0, 1));  //序列化后放入特征矩阵
+        numData.convertTo(numData, CvType.CV_32F); //uchar型转换为cv_32f
+
+        int predict = (int) numModel.predict(numData);
+        String n ;
+        switch (predict){
+            case 1:
+                n = "A"; break;
+            case 11:
+                n = "J"; break;
+            case 12:
+                n = "Q"; break;
+            case 13:
+                n = "K"; break;
+            default:
+                n = String.valueOf(predict); break;
+        }
+        return n;
+    }
+
+    private static String predictFlag(Mat flag){
+        Mat numData = new Mat(),tmp = new Mat();
+        Imgproc.resize(flag, tmp, new Size(30, 30));
+        numData.push_back(tmp.reshape(0, 1));  //序列化后放入特征矩阵
+        numData.convertTo(numData, CvType.CV_32F); //uchar型转换为cv_32f
+
+        int predict = (int)flagModel.predict(numData);
+        String f = "";
+        switch (predict){
+            case 1:
+                f = "红桃 "; break;
+            case 2:
+                f = "方块 "; break;
+            case 3:
+                f = "梅花 "; break;
+            case 4:
+                f = "黑桃 "; break;
+            default:
+                break;
+        }
+        return f;
+    }
+
+    private static Rect getRect(Mat binMat) {
+        List<MatOfPoint> contours = new ArrayList<>();
+        Mat hierarchy = new Mat();
+        Imgproc.findContours(binMat, contours, hierarchy, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_NONE);
+
+        for(int k=0;k<contours.size();k++) {
+            MatOfPoint point = contours.get(k);
+            Rect rect = Imgproc.boundingRect(point);
+            Point tl = rect.tl();
+            Point br = rect.br();
+            double width = Math.abs(br.x - tl.x);
+            if(width > (binMat.width() - binMat.width() * 0.05)){
+               return rect;
+            }
+        }
+        return null;
+    }
+
+    private static List<Rect> getRects(Mat binMat) {
+        List<MatOfPoint> contours = new ArrayList<>();
+        Mat hierarchy = new Mat();
+        Imgproc.findContours(binMat, contours, hierarchy, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_NONE);
+
+        List<Rect> cards = new ArrayList<>();
+        for(int k=0;k<contours.size();k++) {
+            MatOfPoint point = contours.get(k);
+            Rect rect = Imgproc.boundingRect(point);
+            Point tl = rect.tl();
+            Point br = rect.br();
+            double width = Math.abs(br.x - tl.x);
+            double height = Math.abs(tl.y - br.y);
+            if(width > 22 && height < 62 && width < height){
+                cards.add(rect);
+            }
+        }
+        return cards;
     }
 
     /**
